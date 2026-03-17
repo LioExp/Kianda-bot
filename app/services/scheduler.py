@@ -45,12 +45,15 @@ async def publish_pending_posts():
 
             try:
                 if product.media_url:
-                    result = await send_image(group.whatsapp_id, product.media_url, caption)
+                    try:
+                        result = await send_image(group.whatsapp_id, product.media_url, caption)
+                    except Exception:
+                        logger.warning(f"Imagem falhou para {group.name}, a tentar só texto...")
+                        result = await send_text(group.whatsapp_id, caption)
                 else:
                     result = await send_text(group.whatsapp_id, caption)
 
-                logger.info(f"Post {post.id} grupo {group.name} resultado: {result}")
-
+                logger.info(f"Post {post.id} enviado para {group.name}: {result}")
                 post.status = "sent"
                 post.sent_at = datetime.utcnow()
             except Exception as e:
@@ -58,9 +61,8 @@ async def publish_pending_posts():
                 logger.error(f"Falha no post {post.id} grupo {group.name}: {e}")
 
             db.commit()
-
-            # Delay entre posts para evitar spam
-            await asyncio.sleep(8)
+            # 1 minuto entre cada grupo — mais natural, menos risco de bloqueio
+            await asyncio.sleep(60)
 
     finally:
         db.close()
@@ -68,8 +70,6 @@ async def publish_pending_posts():
 
 def schedule_product(db: Session, product_id: int, group_ids: list[int]):
     """Agenda um produto para todos os grupos ao mesmo tempo."""
-    from app.models import Post
-
     now = datetime.utcnow()
 
     scheduled = None
