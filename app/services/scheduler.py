@@ -10,14 +10,14 @@ from app.config import APP_BASE_URL
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone="UTC")
 
+DEFAULT_HOURS = [7, 11, 17, 20]
+
 
 async def publish_pending_posts():
-    """Publica posts pendentes respeitando o limite de 5 por grupo por dia."""
+    """Publica todos os posts pendentes cuja hora já passou."""
     db: Session = SessionLocal()
     try:
         now = datetime.utcnow()
-        hoje = now.replace(hour=0, minute=0, second=0, microsecond=0)
-
         pending = (
             db.query(Post)
             .filter(Post.status == "pending", Post.scheduled_at <= now)
@@ -25,34 +25,12 @@ async def publish_pending_posts():
             .all()
         )
 
-        posts_hoje_por_grupo = {}
-        for post in pending:
-            group_id = post.group_id
-            if group_id not in posts_hoje_por_grupo:
-                count = (
-                    db.query(Post)
-                    .filter(
-                        Post.group_id == group_id,
-                        Post.status == "sent",
-                        Post.sent_at >= hoje,
-                    )
-                    .count()
-                )
-                posts_hoje_por_grupo[group_id] = count
-
         for post in pending:
             product = post.product
             group = post.group
-            group_id = post.group_id
 
             if not group.active or product.status != "active":
                 post.status = "failed"
-                db.commit()
-                continue
-
-            if posts_hoje_por_grupo.get(group_id, 0) >= 5:
-                logger.info(f"Limite diário atingido para grupo {group.name} — post {post.id} adiado")
-                post.scheduled_at = post.scheduled_at + timedelta(days=1)
                 db.commit()
                 continue
 
@@ -72,7 +50,6 @@ async def publish_pending_posts():
 
                 post.status = "sent"
                 post.sent_at = datetime.utcnow()
-                posts_hoje_por_grupo[group_id] = posts_hoje_por_grupo.get(group_id, 0) + 1
                 logger.info(f"Post {post.id} enviado para {group.name}")
             except Exception as e:
                 post.status = "failed"
@@ -83,82 +60,39 @@ async def publish_pending_posts():
         db.close()
 
 
-async def cleanup_inactive_products():
-    """Avisa vendedores sobre produtos sem vendas há 30 dias."""
-    db: Session = SessionLocal()
-    try:
-        from app.models import Vendor, Sale
-        cutoff = datetime.utcnow() - timedelta(days=30)
-
-        vendors = db.query(Vendor).filter(Vendor.state == "active").all()
-
-        for vendor in vendors:
-            produtos_inativos = (
-                db.query(Product)
-                .filter(
-                    Product.vendor_id == vendor.id,
-                    Product.status == "active",
-                    Product.created_at <= cutoff,
-                )
-                .all()
-            )
-
-            sem_vendas = []
-            for p in produtos_inativos:
-                venda_recente = (
-                    db.query(Sale)
-                    .filter(
-                        Sale.product_id == p.id,
-                        Sale.confirmed_at >= cutoff,
-                    )
-                    .first()
-                )
-                if not venda_recente:
-                    sem_vendas.append(p)
-
-            if not sem_vendas:
-                continue
-
-            chat_id = f"{vendor.phone}@c.us"
-            lines = [
-                f"🔔 *Olá {vendor.name}!*\n\n"
-                f"Os seguintes produtos estão activos há mais de 30 dias sem vendas:\n"
-            ]
-            for p in sem_vendas[:10]:
-                lines.append(f"• *{p.name}* — {int(p.price):,} Kz  |  código: `{p.short_code}`")
-
-            lines.append(
-                "\nPara apagar um produto envia:\n"
-                "*apagar produto*\n\n"
-                "Para manter tudo como está, ignora esta mensagem."
-            )
-            await send_text(chat_id, "\n".join(lines))
-            logger.info(f"Aviso de limpeza enviado para {vendor.name}")
-
-    finally:
-        db.close()
-
-
 def schedule_product(db: Session, product_id: int, group_ids: list[int]):
-    """Agenda um produto para ser publicado 3 vezes em cada grupo."""
-    intervals = [
-        timedelta(hours=1),
-        timedelta(hours=24),
-        timedelta(hours=72),
-    ]
+    """Agenda um produto para todos os grupos ao mesmo tempo."""
+    from app.models import Post
+
     now = datetime.utcnow()
 
+    # Encontra o próximo horário disponível
+    scheduled = None
+    for h in DEFAULT_HOURS:
+        slot = now.replace(hour=h, minute=0, second=0, microsecond=0)
+        if slot > now:
+            scheduled = slot
+            break
+
+    # Se não há horário hoje, usa o primeiro de amanhã
+    if not scheduled:
+        tomorrow = now + timedelta(days=1)
+        scheduled = tomorrow.replace(
+            hour=DEFAULT_HOURS[0], minute=0, second=0, microsecond=0
+        )
+
+    # Cria um post para cada grupo no mesmo horário
     for group_id in group_ids:
-        for interval in intervals:
-            post = Post(
-                product_id=product_id,
-                group_id=group_id,
-                scheduled_at=now + interval,
-                status="pending",
-            )
-            db.add(post)
+        post = Post(
+            product_id=product_id,
+            group_id=group_id,
+            scheduled_at=scheduled,
+            status="pending",
+        )
+        db.add(post)
 
     db.commit()
+    logger.info(f"Produto {product_id} agendado para {len(group_ids)} grupos às {scheduled}")
 
 
 def start_scheduler():
@@ -169,13 +103,6 @@ def start_scheduler():
         id="publisher",
         replace_existing=True,
         next_run_time=datetime.utcnow(),
-    )
-    scheduler.add_job(
-        cleanup_inactive_products,
-        trigger="interval",
-        days=30,
-        id="cleanup",
-        replace_existing=True,
     )
     scheduler.start()
     logger.info("Scheduler iniciado.")

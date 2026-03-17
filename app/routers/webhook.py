@@ -29,7 +29,11 @@ async def green_webhook(request: Request, db: Session = Depends(get_db)):
     if "@g.us" in chat_id:
         existing = db.query(Group).filter(Group.whatsapp_id == chat_id).first()
         if not existing:
-            group_name = sender_data.get("chatName", "Grupo sem nome")
+            group_name = (
+                sender_data.get("chatName") or
+                sender_data.get("senderName") or
+                "Grupo sem nome"
+            )
             db.add(Group(
                 whatsapp_id=chat_id,
                 name=group_name,
@@ -37,6 +41,11 @@ async def green_webhook(request: Request, db: Session = Depends(get_db)):
                 active=False,
             ))
             db.commit()
+        else:
+            group_name = sender_data.get("chatName") or sender_data.get("senderName")
+            if group_name and existing.name in (existing.whatsapp_id, "Grupo sem nome"):
+                existing.name = group_name
+                db.commit()
         return {"status": "group_ignored"}
 
     message_data = body.get("messageData", {})
@@ -122,6 +131,34 @@ async def handle_admin(db: Session, text: str, chat_id: str):
         await send_text(chat_id, f"✅ Dono do grupo *{group.name}* definido: {owner}")
         return
 
+    if cmd.startswith("corrigir grupo "):
+        gid = cmd.replace("corrigir grupo ", "").strip()
+        group = db.query(Group).filter(Group.whatsapp_id == gid).first()
+        if not group:
+            await send_text(chat_id, "Grupo não encontrado.")
+            return
+        from app.services.whatsapp import get_group_name
+        novo_nome = await get_group_name(gid)
+        group.name = novo_nome
+        db.commit()
+        await send_text(chat_id, f"✅ Grupo corrigido para: *{novo_nome}*")
+        return
+
+    if cmd.startswith("renomear grupo "):
+        parts = cmd.replace("renomear grupo ", "").split(" ", 1)
+        if len(parts) < 2:
+            await send_text(chat_id, "Usa: admin: renomear grupo {id} {novo nome}")
+            return
+        gid, novo_nome = parts[0], parts[1]
+        group = db.query(Group).filter(Group.whatsapp_id == gid).first()
+        if not group:
+            await send_text(chat_id, "Grupo não encontrado.")
+            return
+        group.name = novo_nome
+        db.commit()
+        await send_text(chat_id, f"✅ Grupo renomeado para *{novo_nome}*.")
+        return
+
     if cmd.startswith("renovar "):
         parts = cmd.replace("renovar ", "").split()
         if len(parts) < 2:
@@ -157,6 +194,8 @@ async def handle_admin(db: Session, text: str, chat_id: str):
         "• admin: activar grupo {id}\n"
         "• admin: desactivar grupo {id}\n"
         "• admin: definir dono {id} {telefone}\n"
+        "• admin: corrigir grupo {id}\n"
+        "• admin: renomear grupo {id} {novo nome}\n"
         "• admin: listar vendedores\n"
         "• admin: renovar {telefone} {dias}"
     ))

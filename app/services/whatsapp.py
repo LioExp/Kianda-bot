@@ -35,6 +35,17 @@ async def send_image(chat_id: str, image_url: str, caption: str = "") -> dict:
         logger.error(f"Erro ao enviar imagem para {chat_id}: {e}")
         return {}
 
+async def get_group_name(group_id: str) -> str:
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(_url("getContactInfo"), json={
+                "chatId": group_id
+            })
+            data = r.json()
+            return data.get("name") or data.get("firstName") or group_id
+    except Exception:
+        return group_id
+
 def phone_to_chat_id(phone: str) -> str:
     phone = phone.strip().replace("+", "").replace(" ", "").replace("-", "")
     if not phone.startswith("244"):
