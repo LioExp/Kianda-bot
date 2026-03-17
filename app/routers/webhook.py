@@ -159,6 +159,29 @@ async def handle_admin(db: Session, text: str, chat_id: str):
         await send_text(chat_id, f"✅ Grupo renomeado para *{novo_nome}*.")
         return
 
+    if cmd.startswith("postar agora "):
+        short_code = cmd.replace("postar agora ", "").strip()
+        from app.models import Product, Post
+        product = db.query(Product).filter(Product.short_code == short_code).first()
+        if not product:
+            await send_text(chat_id, f"Produto *{short_code}* não encontrado.")
+            return
+        grupos = db.query(Group).filter(Group.active == True).all()
+        if not grupos:
+            await send_text(chat_id, "Nenhum grupo activo.")
+            return
+        for g in grupos:
+            post = Post(
+                product_id=product.id,
+                group_id=g.id,
+                scheduled_at=datetime.utcnow(),
+                status="pending",
+            )
+            db.add(post)
+        db.commit()
+        await send_text(chat_id, f"✅ Produto *{short_code}* vai ser publicado em até 5 minutos nos {len(grupos)} grupos activos.")
+        return
+
     if cmd.startswith("renovar "):
         parts = cmd.replace("renovar ", "").split()
         if len(parts) < 2:
@@ -196,6 +219,7 @@ async def handle_admin(db: Session, text: str, chat_id: str):
         "• admin: definir dono {id} {telefone}\n"
         "• admin: corrigir grupo {id}\n"
         "• admin: renomear grupo {id} {novo nome}\n"
+        "• admin: postar agora {codigo}\n"
         "• admin: listar vendedores\n"
         "• admin: renovar {telefone} {dias}"
     ))
