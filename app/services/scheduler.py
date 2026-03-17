@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy.orm import Session
@@ -56,14 +57,16 @@ async def publish_pending_posts():
                 logger.error(f"Falha no post {post.id}: {e}")
 
             db.commit()
+
+            # Delay de 8 segundos entre posts para evitar spam
+            await asyncio.sleep(8)
+
     finally:
         db.close()
 
 
 def schedule_product(db: Session, product_id: int, group_ids: list[int]):
     """Agenda um produto para todos os grupos ao mesmo tempo."""
-    from app.models import Post
-
     now = datetime.utcnow()
 
     # Encontra o próximo horário disponível
