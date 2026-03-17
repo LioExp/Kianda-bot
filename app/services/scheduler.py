@@ -45,20 +45,21 @@ async def publish_pending_posts():
 
             try:
                 if product.media_url:
-                    await send_image(group.whatsapp_id, product.media_url, caption)
+                    result = await send_image(group.whatsapp_id, product.media_url, caption)
                 else:
-                    await send_text(group.whatsapp_id, caption)
+                    result = await send_text(group.whatsapp_id, caption)
+
+                logger.info(f"Post {post.id} grupo {group.name} resultado: {result}")
 
                 post.status = "sent"
                 post.sent_at = datetime.utcnow()
-                logger.info(f"Post {post.id} enviado para {group.name}")
             except Exception as e:
                 post.status = "failed"
-                logger.error(f"Falha no post {post.id}: {e}")
+                logger.error(f"Falha no post {post.id} grupo {group.name}: {e}")
 
             db.commit()
 
-            # Delay de 8 segundos entre posts para evitar spam
+            # Delay entre posts para evitar spam
             await asyncio.sleep(8)
 
     finally:
@@ -67,9 +68,10 @@ async def publish_pending_posts():
 
 def schedule_product(db: Session, product_id: int, group_ids: list[int]):
     """Agenda um produto para todos os grupos ao mesmo tempo."""
+    from app.models import Post
+
     now = datetime.utcnow()
 
-    # Encontra o próximo horário disponível
     scheduled = None
     for h in DEFAULT_HOURS:
         slot = now.replace(hour=h, minute=0, second=0, microsecond=0)
@@ -77,14 +79,12 @@ def schedule_product(db: Session, product_id: int, group_ids: list[int]):
             scheduled = slot
             break
 
-    # Se não há horário hoje, usa o primeiro de amanhã
     if not scheduled:
         tomorrow = now + timedelta(days=1)
         scheduled = tomorrow.replace(
             hour=DEFAULT_HOURS[0], minute=0, second=0, microsecond=0
         )
 
-    # Cria um post para cada grupo no mesmo horário
     for group_id in group_ids:
         post = Post(
             product_id=product_id,
