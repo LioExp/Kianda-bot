@@ -1,2 +1,2 @@
 # Kianda-bot
-Kianda bot is a whatsapp bot 
+Kiandabot Agente IA de vendas no WhatsApp 
