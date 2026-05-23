@@ -19,12 +19,17 @@ async def green_webhook(request: Request, db: Session = Depends(get_db)):
         return {"status": "invalid_request"}
 
     webhook_type = body.get("typeWebhook")
+    logger.info(f"WEBHOOK: {webhook_type}")
 
     if webhook_type != "incomingMessageReceived":
         return {"status": "ignored"}
 
     sender_data = body.get("senderData", {})
     chat_id = sender_data.get("chatId", "")
+    sender = sender_data.get("sender", "")
+    phone = sender.replace("@c.us", "")
+
+    logger.info(f"SENDER: {sender} | PHONE: {phone} | CHAT: {chat_id}")
 
     if "@g.us" in chat_id:
         existing = db.query(Group).filter(Group.whatsapp_id == chat_id).first()
@@ -49,9 +54,6 @@ async def green_webhook(request: Request, db: Session = Depends(get_db)):
         return {"status": "group_ignored"}
 
     message_data = body.get("messageData", {})
-    sender = sender_data.get("sender", "")
-    phone = sender.replace("@c.us", "")
-
     msg_type = message_data.get("typeMessage", "")
     text = ""
     media_url = None
@@ -63,7 +65,10 @@ async def green_webhook(request: Request, db: Session = Depends(get_db)):
         media_url = file_data.get("downloadUrl")
         text = file_data.get("caption", "")
     else:
+        logger.info(f"TYPE_IGNORED: {msg_type}")
         return {"status": "type_ignored"}
+
+    logger.info(f"TEXT: {text} | MEDIA: {media_url}")
 
     if not phone or (not text and not media_url):
         return {"status": "empty_ignored"}
@@ -72,6 +77,7 @@ async def green_webhook(request: Request, db: Session = Depends(get_db)):
         await handle_admin(db, text, chat_id)
         return {"status": "admin_command"}
 
+    logger.info(f"A processar mensagem de {phone}")
     await handle_message(db=db, phone=phone, text=text, chat_id=chat_id, media_url=media_url)
     return {"status": "ok"}
 
