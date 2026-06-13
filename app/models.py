@@ -18,6 +18,9 @@ class Vendor(Base):
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    def __repr__(self):
+        return f"<Vendor {self.name or self.phone}>"
+
 
 class Group(Base):
     __tablename__ = "groups"
@@ -30,6 +33,9 @@ class Group(Base):
     commission_rate = Column(Float, default=0.05)
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<Group {self.name}>"
 
 
 class Product(Base):
@@ -47,6 +53,9 @@ class Product(Base):
 
     vendor = relationship("Vendor")
 
+    def __repr__(self):
+        return f"<Product {self.short_code}: {self.name}>"
+
 
 class Post(Base):
     __tablename__ = "posts"
@@ -62,6 +71,9 @@ class Post(Base):
     product = relationship("Product")
     group = relationship("Group")
 
+    def __repr__(self):
+        return f"<Post {self.id} status={self.status}>"
+
 
 class Click(Base):
     __tablename__ = "clicks"
@@ -72,6 +84,9 @@ class Click(Base):
     ip_address = Column(String(45))
     user_agent = Column(String(300))
     timestamp = Column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<Click {self.id} product={self.product_id}>"
 
 
 class Sale(Base):
@@ -86,3 +101,6 @@ class Sale(Base):
     group_receives = Column(Float, default=0.0)
     platform_receives = Column(Float, default=0.0)
     confirmed_at = Column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<Sale {self.id} amount={self.amount}>"

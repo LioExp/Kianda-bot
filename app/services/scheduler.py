@@ -1,21 +1,20 @@
 import logging
 import asyncio
 from datetime import datetime, timedelta
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy.orm import Session
+
 from app.database import SessionLocal
 from app.models import Post, Product, Group
 from app.services.whatsapp import send_text, send_image
-from app.config import APP_BASE_URL
+from app.config import APP_BASE_URL, DEFAULT_POST_HOURS
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler(timezone="UTC")
 
-DEFAULT_HOURS = [7, 11, 17, 20]
-
 
 async def publish_pending_posts():
-    """Publica todos os posts pendentes cuja hora já passou."""
     db: Session = SessionLocal()
     try:
         now = datetime.utcnow()
@@ -46,14 +45,14 @@ async def publish_pending_posts():
             try:
                 if product.media_url:
                     try:
-                        result = await send_image(group.whatsapp_id, product.media_url, caption)
+                        await send_image(group.whatsapp_id, product.media_url, caption)
                     except Exception:
                         logger.warning(f"Imagem falhou para {group.name}, a tentar só texto...")
-                        result = await send_text(group.whatsapp_id, caption)
+                        await send_text(group.whatsapp_id, caption)
                 else:
-                    result = await send_text(group.whatsapp_id, caption)
+                    await send_text(group.whatsapp_id, caption)
 
-                logger.info(f"Post {post.id} enviado para {group.name}: {result}")
+                logger.info(f"Post {post.id} enviado para {group.name}")
                 post.status = "sent"
                 post.sent_at = datetime.utcnow()
             except Exception as e:
@@ -61,7 +60,6 @@ async def publish_pending_posts():
                 logger.error(f"Falha no post {post.id} grupo {group.name}: {e}")
 
             db.commit()
-            # 1 minuto entre cada grupo — mais natural, menos risco de bloqueio
             await asyncio.sleep(60)
 
     finally:
@@ -69,11 +67,10 @@ async def publish_pending_posts():
 
 
 def schedule_product(db: Session, product_id: int, group_ids: list[int]):
-    """Agenda um produto para todos os grupos ao mesmo tempo."""
     now = datetime.utcnow()
 
     scheduled = None
-    for h in DEFAULT_HOURS:
+    for h in DEFAULT_POST_HOURS:
         slot = now.replace(hour=h, minute=0, second=0, microsecond=0)
         if slot > now:
             scheduled = slot
@@ -82,7 +79,7 @@ def schedule_product(db: Session, product_id: int, group_ids: list[int]):
     if not scheduled:
         tomorrow = now + timedelta(days=1)
         scheduled = tomorrow.replace(
-            hour=DEFAULT_HOURS[0], minute=0, second=0, microsecond=0
+            hour=DEFAULT_POST_HOURS[0], minute=0, second=0, microsecond=0
         )
 
     for group_id in group_ids:

@@ -1,11 +1,15 @@
 import logging
+
 import httpx
+
 from app.config import GREEN_API_URL, GREEN_API_INSTANCE_ID, GREEN_API_TOKEN
 
 logger = logging.getLogger(__name__)
 
+
 def _url(method: str) -> str:
     return f"{GREEN_API_URL}/waInstance{GREEN_API_INSTANCE_ID}/{method}/{GREEN_API_TOKEN}"
+
 
 async def send_text(chat_id: str, message: str) -> dict:
     try:
@@ -19,6 +23,7 @@ async def send_text(chat_id: str, message: str) -> dict:
     except Exception as e:
         logger.error(f"Erro ao enviar mensagem para {chat_id}: {e}")
         return {}
+
 
 async def send_image(chat_id: str, image_url: str, caption: str = "") -> dict:
     try:
@@ -35,16 +40,18 @@ async def send_image(chat_id: str, image_url: str, caption: str = "") -> dict:
         logger.error(f"Erro ao enviar imagem para {chat_id}: {e}")
         return {}
 
+
 async def get_group_name(group_id: str) -> str:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(_url("getContactInfo"), json={
-                "chatId": group_id
+                "chatId": group_id,
             })
             data = r.json()
             return data.get("name") or data.get("firstName") or group_id
     except Exception:
         return group_id
+
 
 def phone_to_chat_id(phone: str) -> str:
     phone = phone.strip().replace("+", "").replace(" ", "").replace("-", "")

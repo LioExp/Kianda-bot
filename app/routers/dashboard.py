@@ -1,29 +1,28 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+
+from app.config import DASHBOARD_KEY
 from app.database import get_db
 from app.models import Vendor, Product, Group, Sale, Post, Click
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
-# Chave simples de acesso — muda para algo seguro
-DASHBOARD_KEY = "kianda2026"
 
-
-def check_auth(request: Request) -> bool:
+def _check_auth(request: Request) -> bool:
     return request.query_params.get("key") == DASHBOARD_KEY
 
 
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
-    if not check_auth(request):
-        return HTMLResponse("<h2>Acesso negado. Adiciona ?key=kianda2026 ao URL.</h2>", status_code=401)
+    if not _check_auth(request):
+        return HTMLResponse(f"<h2>Acesso negado. Adiciona ?key=... ao URL.</h2>", status_code=401)
 
-    # Estatísticas gerais
     total_vendors = db.query(func.count(Vendor.id)).scalar()
     total_products = db.query(func.count(Product.id)).filter(Product.status == "active").scalar()
     total_sales = db.query(func.count(Sale.id)).scalar()
@@ -31,66 +30,15 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     total_clicks = db.query(func.count(Click.id)).scalar()
     pending_posts = db.query(func.count(Post.id)).filter(Post.status == "pending").scalar()
 
-    # Vendedores
     vendors = db.query(Vendor).order_by(Vendor.created_at.desc()).all()
-
-    # Grupos
     groups = db.query(Group).order_by(Group.created_at.desc()).all()
+    sales = db.query(Sale).order_by(Sale.confirmed_at.desc()).limit(20).all()
 
-    # Vendas recentes
-    sales = (
-        db.query(Sale)
-        .order_by(Sale.confirmed_at.desc())
-        .limit(20)
-        .all()
-    )
+    vendors_rows = "".join(_vendor_row(v) for v in vendors) or '<tr><td colspan="6" style="text-align:center;color:#999">Nenhum vendedor</td></tr>'
+    groups_rows = "".join(_group_row(g) for g in groups) or '<tr><td colspan="4" style="text-align:center;color:#999">Nenhum grupo</td></tr>'
+    sales_rows = "".join(_sale_row(s, db) for s in sales) or '<tr><td colspan="7" style="text-align:center;color:#999">Nenhuma venda</td></tr>'
 
-    # Gera HTML
-    vendors_rows = ""
-    for v in vendors:
-        expiry = v.subscription_end.strftime("%d/%m/%Y") if v.subscription_end else "—"
-        expired = v.subscription_end and v.subscription_end < datetime.utcnow()
-        estado = "⚠️ Expirado" if expired else "✅ Activo"
-        cor = "#fff3cd" if expired else "#d4edda"
-        vendors_rows += f"""
-        <tr style="background:{cor}">
-            <td>{v.name or '—'}</td>
-            <td>{v.phone}</td>
-            <td>{v.plan}</td>
-            <td>{estado}</td>
-            <td>{expiry}</td>
-            <td>{int(v.balance):,} Kz</td>
-        </tr>"""
-
-    groups_rows = ""
-    for g in groups:
-        estado = "✅" if g.active else "❌"
-        groups_rows += f"""
-        <tr>
-            <td>{estado}</td>
-            <td>{g.name}</td>
-            <td>{g.owner_phone}</td>
-            <td>{int(g.owner_balance):,} Kz</td>
-        </tr>"""
-
-    sales_rows = ""
-    for s in sales:
-        product = db.query(Product).filter(Product.id == s.product_id).first()
-        product_name = product.name if product else "—"
-        date = s.confirmed_at.strftime("%d/%m %H:%M") if s.confirmed_at else "—"
-        sales_rows += f"""
-        <tr>
-            <td>{date}</td>
-            <td>{product_name}</td>
-            <td>{s.buyer_phone}</td>
-            <td>{int(s.amount):,} Kz</td>
-            <td>{int(s.vendor_receives):,} Kz</td>
-            <td>{int(s.group_receives):,} Kz</td>
-            <td>{int(s.platform_receives):,} Kz</td>
-        </tr>"""
-
-    html = f"""
-<!DOCTYPE html>
+    html = f"""<!DOCTYPE html>
 <html lang="pt">
 <head>
     <meta charset="UTF-8">
@@ -135,7 +83,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             <h2>👥 Vendedores</h2>
             <table>
                 <tr><th>Nome</th><th>Telefone</th><th>Plano</th><th>Estado</th><th>Expira</th><th>Saldo</th></tr>
-                {vendors_rows or '<tr><td colspan="6" style="text-align:center;color:#999">Nenhum vendedor</td></tr>'}
+                {vendors_rows}
             </table>
         </div>
 
@@ -143,7 +91,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             <h2>📢 Grupos</h2>
             <table>
                 <tr><th>Estado</th><th>Nome</th><th>Dono</th><th>Saldo</th></tr>
-                {groups_rows or '<tr><td colspan="4" style="text-align:center;color:#999">Nenhum grupo</td></tr>'}
+                {groups_rows}
             </table>
         </div>
 
@@ -151,13 +99,56 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             <h2>💰 Vendas recentes</h2>
             <table>
                 <tr><th>Data</th><th>Produto</th><th>Comprador</th><th>Total</th><th>Vendedor</th><th>Grupo</th><th>Plataforma</th></tr>
-                {sales_rows or '<tr><td colspan="7" style="text-align:center;color:#999">Nenhuma venda</td></tr>'}
+                {sales_rows}
             </table>
         </div>
 
-        <p class="updated">KiandaBot v1.0 — <a href="?key=kianda2026">Actualizar</a></p>
+        <p class="updated">KiandaBot v1.0 — <a href="?key={DASHBOARD_KEY}">Actualizar</a></p>
     </div>
 </body>
 </html>"""
 
     return HTMLResponse(html)
+
+
+def _vendor_row(v: Vendor) -> str:
+    expiry = v.subscription_end.strftime("%d/%m/%Y") if v.subscription_end else "—"
+    expired = v.subscription_end and v.subscription_end < datetime.utcnow()
+    estado = "⚠️ Expirado" if expired else "✅ Activo"
+    cor = "#fff3cd" if expired else "#d4edda"
+    return f"""
+    <tr style="background:{cor}">
+        <td>{v.name or '—'}</td>
+        <td>{v.phone}</td>
+        <td>{v.plan}</td>
+        <td>{estado}</td>
+        <td>{expiry}</td>
+        <td>{int(v.balance):,} Kz</td>
+    </tr>"""
+
+
+def _group_row(g: Group) -> str:
+    estado = "✅" if g.active else "❌"
+    return f"""
+    <tr>
+        <td>{estado}</td>
+        <td>{g.name}</td>
+        <td>{g.owner_phone}</td>
+        <td>{int(g.owner_balance):,} Kz</td>
+    </tr>"""
+
+
+def _sale_row(s: Sale, db: Session) -> str:
+    product = db.query(Product).filter(Product.id == s.product_id).first()
+    product_name = product.name if product else "—"
+    date = s.confirmed_at.strftime("%d/%m %H:%M") if s.confirmed_at else "—"
+    return f"""
+    <tr>
+        <td>{date}</td>
+        <td>{product_name}</td>
+        <td>{s.buyer_phone}</td>
+        <td>{int(s.amount):,} Kz</td>
+        <td>{int(s.vendor_receives):,} Kz</td>
+        <td>{int(s.group_receives):,} Kz</td>
+        <td>{int(s.platform_receives):,} Kz</td>
+    </tr>"""
