@@ -1,2 +1,2 @@
 # Kianda-bot
-Kiandabot Agente IA de vendas no WhatsApp 
+plataforma de vendas com agentes autonomas
